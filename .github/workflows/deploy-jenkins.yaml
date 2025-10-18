@@ -50,9 +50,26 @@ jobs:
         # 验证连接
         kubectl cluster-info
 
+    - name: Clean up previous deployment (if exists)
+      run: |
+        # 清理可能存在的旧部署，避免 PVC 冲突
+        kubectl delete deployment jenkins-master jenkins-agent -n $NAMESPACE --ignore-not-found=true
+        kubectl delete pvc jenkins-master-pvc jenkins-agent-pvc -n $NAMESPACE --ignore-not-found=true
+        echo "Previous deployment cleaned up"
+
     - name: Deploy Jenkins Namespace
       run: |
         kubectl apply -f k8s/namespaces/
+
+    - name: Deploy Jenkins ConfigMap
+      run: |
+        # 部署初始化配置
+        if [ -f "k8s/jenkins-master/jenkins-init-configmap.yaml" ]; then
+          kubectl apply -f k8s/jenkins-master/jenkins-init-configmap.yaml
+          echo "✅ Jenkins ConfigMap deployed"
+        else
+          echo "⚠️  ConfigMap file not found, continuing without it"
+        fi
 
     - name: Deploy Storage
       run: |
@@ -68,23 +85,37 @@ jobs:
         kubectl apply -f k8s/jenkins-master/jenkins-master-deployment.yaml
         kubectl apply -f k8s/jenkins-master/jenkins-master-service.yaml
 
+    - name: Wait for Jenkins Master to be ready
+      run: |
+        # 等待部署完成
+        echo "Waiting for Jenkins Master deployment to be ready..."
+        kubectl rollout status deployment/jenkins-master -n $NAMESPACE --timeout=600s
+        
+        # 等待 Pod 就绪
+        echo "Waiting for Jenkins Master pod to be ready..."
+        kubectl wait --for=condition=ready pod -l app=jenkins-master -n $NAMESPACE --timeout=600s
+        
+        # 检查 Pod 状态
+        kubectl get pods -n $NAMESPACE -l app=jenkins-master
+        echo "✅ Jenkins Master is ready"
+
     - name: Deploy Jenkins Agent
       run: |
         kubectl apply -f k8s/jenkins-agent/jenkins-agent-deployment.yaml
+        echo "✅ Jenkins Agent deployed"
 
     - name: Deploy ALB Ingress
       run: |
         kubectl apply -f k8s/networking/
+        echo "✅ ALB Ingress deployed"
 
-    - name: Wait for Jenkins to be ready
+    - name: Wait for Jenkins Agent to be ready
       run: |
-        # 等待部署完成
-        echo "Waiting for Jenkins deployment to be ready..."
-        kubectl rollout status deployment/jenkins-master -n $NAMESPACE --timeout=600s
-        
-        # 等待 Pod 就绪
-        echo "Waiting for Jenkins pod to be ready..."
-        kubectl wait --for=condition=ready pod -l app=jenkins-master -n $NAMESPACE --timeout=600s
+        # 等待 Agent 启动
+        echo "Waiting for Jenkins Agent to be ready..."
+        sleep 30  # 给 Agent 一些启动时间
+        kubectl get pods -n $NAMESPACE -l app=jenkins-agent
+        echo "✅ Jenkins Agent deployment completed"
 
     - name: Get Jenkins ALB URL and Admin Password
       run: |
@@ -116,7 +147,8 @@ jobs:
         JENKINS_POD=$(kubectl get pods -n $NAMESPACE -l app=jenkins-master -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
         if [ -n "$JENKINS_POD" ]; then
           echo "🔑 Initial Admin Password:"
-          kubectl exec -n $NAMESPACE $JENKINS_POD -- cat /var/jenkins_home/secrets/initialAdminPassword 2>/dev/null || echo "Password not available yet, check pod logs"
+          PASSWORD=$(kubectl exec -n $NAMESPACE $JENKINS_POD -- cat /var/jenkins_home/secrets/initialAdminPassword 2>/dev/null || echo "Password not available yet, check pod logs")
+          echo "$PASSWORD"
         else
           echo "❌ Jenkins pod not found"
         fi
@@ -149,10 +181,20 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
         fi
         
+        echo "### 🛠️ Components Status" >> $GITHUB_STEP_SUMMARY
+        echo "- **Jenkins Master**: ✅ Deployed" >> $GITHUB_STEP_SUMMARY
+        echo "- **Jenkins Agent**: ✅ Deployed" >> $GITHUB_STEP_SUMMARY
+        echo "- **ALB Ingress**: ✅ Deployed" >> $GITHUB_STEP_SUMMARY
+        echo "- **ConfigMap**: ✅ Deployed" >> $GITHUB_STEP_SUMMARY
+        echo "- **Storage**: ✅ Deployed" >> $GITHUB_STEP_SUMMARY
+        echo "- **RBAC**: ✅ Deployed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
         echo "### ⏰ Important Notes" >> $GITHUB_STEP_SUMMARY
         echo "1. **ALB 可能需要 2-5 分钟完全就绪**" >> $GITHUB_STEP_SUMMARY
         echo "2. **使用 HTTP 协议直接访问**" >> $GITHUB_STEP_SUMMARY
         echo "3. **无需证书，可直接登录**" >> $GITHUB_STEP_SUMMARY
+        echo "4. **首次访问需要初始管理员密码**" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "---" >> $GITHUB_STEP_SUMMARY
         echo "✅ **Status**: Deployment completed successfully" >> $GITHUB_STEP_SUMMARY

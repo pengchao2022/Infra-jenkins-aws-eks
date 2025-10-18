@@ -16,33 +16,30 @@ spec:
       serviceAccountName: jenkins
       containers:
       - name: jnlp
-        image: jenkins/inbound-agent:latest
-        args:
-        - -url
-        - http://jenkins-master.jenkins.svc.cluster.local:8080
-        - -workDir
-        - /home/jenkins/agent
-        - $(POD_NAME):$(JENKINS_SECRET)
+        image: jenkins/inbound-agent:jdk11
         env:
-        - name: POD_NAME
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.name
+        - name: JENKINS_URL
+          value: "http://jenkins-master.jenkins:8080"
         - name: JENKINS_SECRET
           value: ""
         - name: JENKINS_AGENT_NAME
           value: "eks-agent"
+        - name: JENKINS_AGENT_WORKDIR
+          value: "/home/jenkins/agent"
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Waiting for Jenkins Master to be ready..."
+          sleep 60  # 简单等待
+          echo "Starting Jenkins agent..."
+          java -jar /usr/share/jenkins/agent.jar \
+            -url http://jenkins-master.jenkins:8080 \
+            -workDir /home/jenkins/agent
         resources:
           requests:
             memory: "256Mi"
-            cpu: "500m"
+            cpu: "250m"
           limits:
             memory: "512Mi"
-            cpu: "1000m"
-        volumeMounts:
-        - name: workspace
-          mountPath: /home/jenkins/agent
-      volumes:
-      - name: workspace
-        persistentVolumeClaim:
-          claimName: jenkins-agent-pvc
+            cpu: "500m"

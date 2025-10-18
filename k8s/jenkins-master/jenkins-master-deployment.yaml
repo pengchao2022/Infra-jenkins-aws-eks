@@ -18,16 +18,13 @@ spec:
         fsGroup: 1000
       containers:
       - name: jenkins
-        image: jenkins/jenkins:lts
+        image: jenkins/jenkins:lts-jdk11
         ports:
         - containerPort: 8080
         - containerPort: 50000
         env:
         - name: JAVA_OPTS
           value: "-Djava.awt.headless=true"
-        # 移除或注释掉免安装向导的设置
-        # - name: JAVA_OPTS
-        #   value: "-Djenkins.install.runSetupWizard=false"
         resources:
           requests:
             memory: "256Mi"
@@ -38,13 +35,14 @@ spec:
         volumeMounts:
         - name: jenkins-home
           mountPath: /var/jenkins_home
-        - name: jenkins-config
-          mountPath: /var/jenkins_config
+        - name: jenkins-init-script
+          mountPath: /usr/share/jenkins/ref/init.groovy.d/init.groovy
+          subPath: init.groovy
         livenessProbe:
           httpGet:
             path: /login
             port: 8080
-          initialDelaySeconds: 90
+          initialDelaySeconds: 120
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 5
@@ -60,6 +58,7 @@ spec:
       - name: jenkins-home
         persistentVolumeClaim:
           claimName: jenkins-master-pvc
-      - name: jenkins-config
+      - name: jenkins-init-script
         configMap:
           name: jenkins-init-config
+          defaultMode: 0644
