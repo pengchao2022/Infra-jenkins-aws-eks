@@ -8,28 +8,37 @@ data:
     #!groovy
     import jenkins.model.*
     import hudson.security.*
+    import jenkins.install.InstallState
     
     def instance = Jenkins.getInstance()
     
-    // 只在初次安装时设置
-    if (!instance.isInstallStateSet()) {
-      println "--> Setting up initial security"
+    // 跳过安装向导，直接设置安全配置
+    if (!instance.installState.isSetupComplete()) {
+      println "--> Setting up Jenkins security configuration"
       
-      // 创建本地用户数据库
-      def hudsonRealm = new HudsonPrivateSecurityRealm(false)
-      hudsonRealm.createAccount("admin", "admin123")
-      instance.setSecurityRealm(hudsonRealm)
+      // 创建安全域 - 允许匿名读取，但需要登录才能执行操作
+      def strategy = new GlobalMatrixAuthorizationStrategy()
       
-      // 设置授权策略
-      def strategy = new FullControlOnceLoggedInAuthorizationStrategy()
-      strategy.setAllowAnonymousRead(false)
+      // 给匿名用户只读权限
+      strategy.add(Jenkins.READ, 'anonymous')
+      
+      // 给已验证用户所有权限
+      strategy.add(Jenkins.ADMINISTER, 'authenticated')
+      
       instance.setAuthorizationStrategy(strategy)
       
-      // 标记安装完成
+      // 禁用安全域，允许任何人访问（生产环境不推荐）
+      // 或者使用基本安全域
+      def realm = new HudsonPrivateSecurityRealm(false)
+      realm.createAccount("admin", "admin123")
+      instance.setSecurityRealm(realm)
+      
+      // 设置安装状态为完成
       instance.setInstallState(InstallState.INITIAL_SETUP_COMPLETED)
       
       // 保存配置
       instance.save()
       
-      println "--> Initial security setup completed"
+      println "--> Jenkins security setup completed"
+      println "--> Default admin credentials: admin / admin123"
     }

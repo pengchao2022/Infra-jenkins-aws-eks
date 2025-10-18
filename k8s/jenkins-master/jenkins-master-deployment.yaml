@@ -13,9 +13,10 @@ spec:
       labels:
         app: jenkins-master
     spec:
-      serviceAccountName: jenkins
+      serviceAccountName: jenkins  # 确保使用正确的 ServiceAccount
       securityContext:
         fsGroup: 1000
+        runAsUser: 1000
       containers:
       - name: jenkins
         image: jenkins/jenkins:lts-jdk11
@@ -24,11 +25,13 @@ spec:
         - containerPort: 50000
         env:
         - name: JAVA_OPTS
-          value: "-Djava.awt.headless=true"
+          value: "-Djava.awt.headless=true -Djenkins.install.runSetupWizard=false"
+        - name: JENKINS_OPTS
+          value: "--argumentsRealm.passwd.admin=admin123 --argumentsRealm.roles.admin=admin"
         resources:
           requests:
             memory: "256Mi"
-            cpu: "500m"
+            cpu: "512m"
           limits:
             memory: "512Mi"
             cpu: "1000m"
@@ -36,7 +39,7 @@ spec:
         - name: jenkins-home
           mountPath: /var/jenkins_home
         - name: jenkins-init-script
-          mountPath: /usr/share/jenkins/ref/init.groovy.d/init.groovy
+          mountPath: /usr/share/jenkins/ref/init.groovy.d/01-init.groovy
           subPath: init.groovy
         livenessProbe:
           httpGet:
