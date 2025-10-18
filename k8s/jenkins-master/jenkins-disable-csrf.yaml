@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jenkins-disable-csrf
+  namespace: jenkins
+data:
+  disable-csrf.groovy: |
+    #!groovy
+    import jenkins.model.Jenkins
+    
+    def instance = Jenkins.getInstance()
+    
+    // 禁用 CSRF 保护
+    instance.setCrumbIssuer(null)
+    instance.save()
+    
+    println "CSRF protection disabled"
