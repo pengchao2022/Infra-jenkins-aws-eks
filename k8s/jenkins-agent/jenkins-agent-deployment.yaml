@@ -14,32 +14,37 @@ spec:
         app: jenkins-agent
     spec:
       serviceAccountName: jenkins
+      securityContext:
+        fsGroup: 1000  # 设置文件系统组权限
+        runAsUser: 1000  # 以 jenkins 用户运行 (UID 1000)
       containers:
       - name: jnlp
-        image: jenkins/inbound-agent:jdk11
-        env:
-        - name: JENKINS_URL
-          value: "http://jenkins-master.jenkins:8080"
-        - name: JENKINS_SECRET
-          value: ""
-        - name: JENKINS_AGENT_NAME
-          value: "eks-agent"
-        - name: JENKINS_AGENT_WORKDIR
-          value: "/home/jenkins/agent"
+        image: jenkins/inbound-agent:latest
         command:
         - /bin/sh
         - -c
         - |
-          echo "Waiting for Jenkins Master to be ready..."
-          sleep 60  # 简单等待
-          echo "Starting Jenkins agent..."
+          echo "Setting up workspace permissions..."
+          # 确保目录存在且有正确权限
+          mkdir -p /home/jenkins/agent
+          chown -R 1000:1000 /home/jenkins/agent
+          chmod -R 755 /home/jenkins/agent
+          
+          echo "Starting Jenkins Agent..."
           java -jar /usr/share/jenkins/agent.jar \
             -url http://jenkins-master.jenkins:8080 \
             -workDir /home/jenkins/agent
         resources:
           requests:
             memory: "256Mi"
-            cpu: "250m"
+            cpu: "100m"
           limits:
             memory: "512Mi"
-            cpu: "500m"
+            cpu: "250m"
+        volumeMounts:
+        - name: workspace
+          mountPath: /home/jenkins/agent
+      volumes:
+      - name: workspace
+        persistentVolumeClaim:
+          claimName: jenkins-agent-pvc

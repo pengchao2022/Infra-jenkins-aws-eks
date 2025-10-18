@@ -1,0 +1,24 @@
+配置 Jenkins 使用 Kubernetes 动态代理
+更好的方法是让 Jenkins 按需创建和销毁 Agent，而不是运行常驻 Agent。
+
+在 Jenkins Web UI 中配置：
+
+访问 http://<ALB_URL>/jenkins
+
+系统管理 → 节点和云 → 配置云
+
+添加 Kubernetes 云
+
+配置 Kubernetes 集群连接
+
+搜索并安装：
+
+Kubernetes
+
+Pipeline
+
+Kubernetes CLI (可选)
+
+Docker Pipeline (可选)
+
+
