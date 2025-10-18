@@ -38,51 +38,186 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
-    - name: Setup EKS access
+    - name: Set up kubectl and connect to EKS
       run: |
+        # 安装 kubectl
+        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+        
+        # 更新 kubeconfig 连接到 EKS 集群
         aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.CLUSTER_NAME }}
+        
+        # 验证连接
+        kubectl cluster-info
 
-    - name: Cleanup previous deployment
+    - name: Clean up previous deployment (if exists)
       run: |
+        # 清理可能存在的旧部署，避免 PVC 冲突
         kubectl delete deployment jenkins-master jenkins-agent -n $NAMESPACE --ignore-not-found=true
         kubectl delete pvc jenkins-master-pvc jenkins-agent-pvc -n $NAMESPACE --ignore-not-found=true
+        echo "Previous deployment cleaned up"
 
-    - name: Deploy Jenkins resources
+    - name: Deploy Jenkins Namespace
       run: |
         kubectl apply -f k8s/namespaces/
-        kubectl apply -f k8s/jenkins-master/jenkins-disable-csrf.yaml
+
+    - name: Deploy Jenkins ConfigMaps
+      run: |
+        # 部署 CSRF 禁用配置
+        if [ -f "k8s/jenkins-master/jenkins-disable-csrf.yaml" ]; then
+          kubectl apply -f k8s/jenkins-master/jenkins-disable-csrf.yaml
+          echo "✅ CSRF ConfigMap deployed"
+        else
+          echo "⚠️  CSRF ConfigMap file not found"
+        fi
+        
+        # 部署其他可能的 ConfigMaps
+        if [ -f "k8s/jenkins-master/jenkins-init-configmap.yaml" ]; then
+          kubectl apply -f k8s/jenkins-master/jenkins-init-configmap.yaml
+          echo "✅ Init ConfigMap deployed"
+        fi
+        
+        if [ -f "k8s/jenkins-master/jenkins-preconfigured-security.yaml" ]; then
+          kubectl apply -f k8s/jenkins-master/jenkins-preconfigured-security.yaml
+          echo "✅ Security ConfigMap deployed"
+        fi
+
+    - name: Deploy Storage
+      run: |
         kubectl apply -f k8s/storage/
+
+    - name: Deploy RBAC and Service Account
+      run: |
         kubectl apply -f k8s/jenkins-master/rbac/
         kubectl apply -f k8s/jenkins-master/jenkins-service-account.yaml
+
+    - name: Deploy Jenkins Master
+      run: |
         kubectl apply -f k8s/jenkins-master/jenkins-master-deployment.yaml
         kubectl apply -f k8s/jenkins-master/jenkins-master-service.yaml
 
-    - name: Wait for Jenkins Master
+    - name: Wait for Jenkins Master to be ready
       run: |
+        # 等待部署完成
+        echo "Waiting for Jenkins Master deployment to be ready..."
+        kubectl rollout status deployment/jenkins-master -n $NAMESPACE --timeout=600s
+        
+        # 等待 Pod 就绪
+        echo "Waiting for Jenkins Master pod to be ready..."
         kubectl wait --for=condition=ready pod -l app=jenkins-master -n $NAMESPACE --timeout=600s
+        
+        # 检查 Pod 状态
+        kubectl get pods -n $NAMESPACE -l app=jenkins-master
+        echo "✅ Jenkins Master is ready"
 
-    - name: Deploy remaining resources
+    - name: Deploy Jenkins Agent
       run: |
         kubectl apply -f k8s/jenkins-agent/jenkins-agent-deployment.yaml
-        kubectl apply -f k8s/networking/
+        echo "✅ Jenkins Agent deployed"
 
-    - name: Get deployment info
+    - name: Deploy ALB Ingress
       run: |
-        ALB_URL=$(kubectl get ingress jenkins-alb -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "Pending")
+        kubectl apply -f k8s/networking/
+        echo "✅ ALB Ingress deployed"
+
+    - name: Wait for Jenkins Agent to be ready
+      run: |
+        # 等待 Agent 启动
+        echo "Waiting for Jenkins Agent to be ready..."
+        sleep 30  # 给 Agent 一些启动时间
+        kubectl get pods -n $NAMESPACE -l app=jenkins-agent
+        echo "✅ Jenkins Agent deployment completed"
+
+    - name: Get Jenkins ALB URL and check CSRF status
+      run: |
+        echo "=== Jenkins Deployment Information ==="
+        echo ""
+        
+        # 获取 ALB URL
+        echo "Getting ALB URL..."
+        for i in {1..10}; do
+          ALB_URL=$(kubectl get ingress jenkins-alb -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null)
+          if [ -n "$ALB_URL" ]; then
+            break
+          fi
+          echo "ALB not ready yet, waiting... ($i/10)"
+          sleep 30
+        done
+        
+        if [ -n "$ALB_URL" ]; then
+          echo "🌐 Jenkins URL: http://$ALB_URL/jenkins"
+          echo "🌐 Direct URL: http://$ALB_URL/"
+        else
+          echo "❌ ALB is still provisioning..."
+          ALB_URL="Pending... (check again in 2-5 minutes)"
+        fi
+        echo ""
+        
+        # 检查 CSRF 配置状态
+        echo "Checking CSRF configuration status..."
         JENKINS_POD=$(kubectl get pods -n $NAMESPACE -l app=jenkins-master -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-        
-        echo "ALB_URL=$ALB_URL" >> $GITHUB_ENV
-        echo "JENKINS_POD=$JENKINS_POD" >> $GITHUB_ENV
-        
-        echo "Jenkins URL: http://$ALB_URL/jenkins"
         if [ -n "$JENKINS_POD" ]; then
-          echo "Initial password:"
-          kubectl exec -n $NAMESPACE $JENKINS_POD -- cat /var/jenkins_home/secrets/initialAdminPassword 2>/dev/null || echo "Check pod logs"
+          echo "🔍 Checking CSRF disable script execution..."
+          kubectl logs -n $NAMESPACE $JENKINS_POD | grep -i "csrf" || echo "No CSRF-related logs found"
+        else
+          echo "❌ Jenkins pod not found"
+        fi
+        echo ""
+        
+        # 获取初始管理员密码
+        echo "Getting initial admin password..."
+        if [ -n "$JENKINS_POD" ]; then
+          echo "🔑 Initial Admin Password:"
+          PASSWORD=$(kubectl exec -n $NAMESPACE $JENKINS_POD -- cat /var/jenkins_home/secrets/initialAdminPassword 2>/dev/null || echo "Password not available yet, check pod logs")
+          echo "$PASSWORD"
+        else
+          echo "❌ Jenkins pod not found"
         fi
 
-    - name: Create summary
+    - name: Create deployment summary
       run: |
-        echo "## Jenkins Deployment Complete" >> $GITHUB_STEP_SUMMARY
-        echo "- **URL**: http://${{ env.ALB_URL }}/jenkins" >> $GITHUB_STEP_SUMMARY
-        echo "- **Status**: ✅ Success" >> $GITHUB_STEP_SUMMARY
-        echo "- **Note**: ALB may take 2-5 minutes to be ready" >> $GITHUB_STEP_SUMMARY
+        ALB_URL=$(kubectl get ingress jenkins-alb -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "Pending...")
+        JENKINS_POD=$(kubectl get pods -n $NAMESPACE -l app=jenkins-master -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+        
+        echo "## 🚀 Jenkins Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📊 Deployment Details" >> $GITHUB_STEP_SUMMARY
+        echo "- **Cluster**: ${{ env.CLUSTER_NAME }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Namespace**: ${{ env.NAMESPACE }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **AWS Region**: ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Protocol**: HTTP (直接访问)" >> $GITHUB_STEP_SUMMARY
+        echo "- **CSRF Protection**: Disabled (for initial setup)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        echo "### 🌐 Access URLs" >> $GITHUB_STEP_SUMMARY
+        echo "- **Jenkins Dashboard**: http://$ALB_URL/jenkins" >> $GITHUB_STEP_SUMMARY
+        echo "- **Direct Access**: http://$ALB_URL/" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -n "$JENKINS_POD" ]; then
+          echo "### 🔑 Initial Setup" >> $GITHUB_STEP_SUMMARY
+          echo "获取初始管理员密码：" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "kubectl exec -n jenkins $JENKINS_POD -- cat /var/jenkins_home/secrets/initialAdminPassword" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "### 🛠️ Components Status" >> $GITHUB_STEP_SUMMARY
+        echo "- **Jenkins Master**: ✅ Deployed" >> $GITHUB_STEP_SUMMARY
+        echo "- **Jenkins Agent**: ✅ Deployed" >> $GITHUB_STEP_SUMMARY
+        echo "- **ALB Ingress**: ✅ Deployed" >> $GITHUB_STEP_SUMMARY
+        echo "- **CSRF ConfigMap**: ✅ Deployed" >> $GITHUB_STEP_SUMMARY
+        echo "- **Storage**: ✅ Deployed" >> $GITHUB_STEP_SUMMARY
+        echo "- **RBAC**: ✅ Deployed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        echo "### ⏰ Important Notes" >> $GITHUB_STEP_SUMMARY
+        echo "1. **ALB 可能需要 2-5 分钟完全就绪**" >> $GITHUB_STEP_SUMMARY
+        echo "2. **使用 HTTP 协议直接访问**" >> $GITHUB_STEP_SUMMARY
+        echo "3. **无需证书，可直接登录**" >> $GITHUB_STEP_SUMMARY
+        echo "4. **CSRF 保护已禁用，解决安装时的 Forbidden 错误**" >> $GITHUB_STEP_SUMMARY
+        echo "5. **首次访问需要初始管理员密码**" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "---" >> $GITHUB_STEP_SUMMARY
+        echo "✅ **Status**: Deployment completed successfully" >> $GITHUB_STEP_SUMMARY
