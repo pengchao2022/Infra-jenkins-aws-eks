@@ -23,7 +23,7 @@ env:
   NAMESPACE: jenkins
 
 jobs:
-  deploy:
+  Deploy-Jenkins-to-EKS:
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment || 'dev' }}
 
