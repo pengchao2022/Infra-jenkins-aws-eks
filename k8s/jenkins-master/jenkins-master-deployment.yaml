@@ -13,10 +13,9 @@ spec:
       labels:
         app: jenkins-master
     spec:
-      serviceAccountName: jenkins  # 确保使用正确的 ServiceAccount
+      serviceAccountName: jenkins
       securityContext:
         fsGroup: 1000
-        runAsUser: 1000
       containers:
       - name: jenkins
         image: jenkins/jenkins:lts-jdk11
@@ -26,26 +25,23 @@ spec:
         env:
         - name: JAVA_OPTS
           value: "-Djava.awt.headless=true"
-        - name: JENKINS_OPTS
-          value: "--argumentsRealm.passwd.admin=admin123 --argumentsRealm.roles.admin=admin"
+          # 移除 -Djenkins.install.runSetupWizard=false
+          # 这样会显示安装向导和登录页面
         resources:
           requests:
             memory: "256Mi"
-            cpu: "512m"
+            cpu: "500m"
           limits:
             memory: "512Mi"
             cpu: "1000m"
         volumeMounts:
         - name: jenkins-home
           mountPath: /var/jenkins_home
-        - name: jenkins-init-script
-          mountPath: /usr/share/jenkins/ref/init.groovy.d/01-init.groovy
-          subPath: init.groovy
         livenessProbe:
           httpGet:
             path: /login
             port: 8080
-          initialDelaySeconds: 120
+          initialDelaySeconds: 180
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 5
@@ -53,7 +49,7 @@ spec:
           httpGet:
             path: /login
             port: 8080
-          initialDelaySeconds: 60
+          initialDelaySeconds: 120
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 3
@@ -61,7 +57,3 @@ spec:
       - name: jenkins-home
         persistentVolumeClaim:
           claimName: jenkins-master-pvc
-      - name: jenkins-init-script
-        configMap:
-          name: jenkins-init-config
-          defaultMode: 0644
