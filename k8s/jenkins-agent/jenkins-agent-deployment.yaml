@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jenkins-agent
+  namespace: jenkins
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jenkins-agent
+  template:
+    metadata:
+      labels:
+        app: jenkins-agent
+    spec:
+      serviceAccountName: jenkins
+      containers:
+      - name: jnlp
+        image: jenkins/inbound-agent:latest
+        args:
+        - -url
+        - http://jenkins-master.jenkins.svc.cluster.local:8080
+        - -workDir
+        - /home/jenkins/agent
+        - $(POD_NAME):$(JENKINS_SECRET)
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: JENKINS_SECRET
+          value: ""
+        - name: JENKINS_AGENT_NAME
+          value: "eks-agent"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "500m"
+          limits:
+            memory: "512Mi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: workspace
+          mountPath: /home/jenkins/agent
+      volumes:
+      - name: workspace
+        persistentVolumeClaim:
+          claimName: jenkins-agent-pvc
