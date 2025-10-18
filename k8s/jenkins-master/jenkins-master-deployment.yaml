@@ -24,7 +24,10 @@ spec:
         - containerPort: 50000
         env:
         - name: JAVA_OPTS
-          value: "-Djenkins.install.runSetupWizard=false -Djava.awt.headless=true"
+          value: "-Djava.awt.headless=true"
+        # 移除或注释掉免安装向导的设置
+        # - name: JAVA_OPTS
+        #   value: "-Djenkins.install.runSetupWizard=false"
         resources:
           requests:
             memory: "256Mi"
@@ -35,6 +38,8 @@ spec:
         volumeMounts:
         - name: jenkins-home
           mountPath: /var/jenkins_home
+        - name: jenkins-config
+          mountPath: /var/jenkins_config
         livenessProbe:
           httpGet:
             path: /login
@@ -55,3 +60,6 @@ spec:
       - name: jenkins-home
         persistentVolumeClaim:
           claimName: jenkins-master-pvc
+      - name: jenkins-config
+        configMap:
+          name: jenkins-init-config
