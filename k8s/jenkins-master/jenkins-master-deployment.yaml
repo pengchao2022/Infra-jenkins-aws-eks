@@ -25,7 +25,7 @@ spec:
         - containerPort: 50000
         env:
         - name: JAVA_OPTS
-          value: "-Djava.awt.headless=true -Djenkins.install.runSetupWizard=false"
+          value: "-Djava.awt.headless=true"
         - name: JENKINS_OPTS
           value: "--argumentsRealm.passwd.admin=admin123 --argumentsRealm.roles.admin=admin"
         resources:
