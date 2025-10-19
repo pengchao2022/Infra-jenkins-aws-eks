@@ -14,37 +14,115 @@ spec:
         app: jenkins-agent
     spec:
       serviceAccountName: jenkins
-      securityContext:
-        fsGroup: 1000  # 设置文件系统组权限
-        runAsUser: 1000  # 以 jenkins 用户运行 (UID 1000)
       containers:
       - name: jnlp
         image: jenkins/inbound-agent:latest
+        securityContext:
+          runAsUser: 0  # 以 root 用户运行
+          privileged: true  # 特权模式
         command:
         - /bin/sh
         - -c
         - |
-          echo "Setting up workspace permissions..."
-          # 确保目录存在且有正确权限
-          mkdir -p /home/jenkins/agent
-          chown -R 1000:1000 /home/jenkins/agent
-          chmod -R 755 /home/jenkins/agent
+          echo "Starting as root user - full installation privileges available"
           
+          echo "Installing system dependencies..."
+          apt-get update && apt-get install -y \
+            curl \
+            wget \
+            unzip \
+            git \
+            python3 \
+            python3-pip \
+            gnupg \
+            lsb-release \
+            ca-certificates \
+            apt-transport-https \
+            software-properties-common
+
+          echo "Installing Docker..."
+          # 安装 Docker
+          install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+          chmod a+r /etc/apt/keyrings/docker.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+          
+          apt-get update
+          apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+          echo "Installing AWS CLI v2 using official method..."
+          # 方法1: 使用官方安装脚本（推荐）
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip -q awscliv2.zip
+          ./aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli --update
+          rm -rf awscliv2.zip aws/
+
+          # 方法2: 使用系统包管理器（备选）
+          # curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          # unzip -q awscliv2.zip
+          # ./aws/install -i /usr/local/aws-cli -b /usr/local/bin
+          # rm -rf awscliv2.zip aws/
+
+          echo "Installing Python packages (excluding awscli)..."
+          # 只安装必要的 Python 包，避免安装 awscli
+          pip3 install boto3 botocore requests docker
+
+          echo "Creating necessary directories..."
+          mkdir -p /home/jenkins/agent
+          mkdir -p /root/.aws
+          chown -R 1000:1000 /home/jenkins/agent
+
+          echo "=== Installation Verification ==="
+          echo "Docker: $(docker --version 2>/dev/null || echo 'Not installed')"
+          echo "Python: $(python3 --version 2>/dev/null || echo 'Not installed')"
+          echo "AWS CLI: $(aws --version 2>/dev/null || echo 'Not installed')"
+          echo "================================="
+
           echo "Starting Jenkins Agent..."
-          java -jar /usr/share/jenkins/agent.jar \
-            -url http://jenkins-master.jenkins:8080 \
-            -workDir /home/jenkins/agent
+          # 切换到 jenkins 用户运行 agent
+          su - jenkins -c "java -jar /usr/share/jenkins/agent.jar -url http://jenkins-master.jenkins:8080 -workDir /home/jenkins/agent"
         resources:
           requests:
-            memory: "256Mi"
-            cpu: "100m"
+            memory: "1Gi"
+            cpu: "500m"
           limits:
-            memory: "512Mi"
-            cpu: "250m"
+            memory: "2Gi"
+            cpu: "1000m"
         volumeMounts:
         - name: workspace
           mountPath: /home/jenkins/agent
+        - name: aws-config
+          mountPath: /root/.aws
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+
+      # Docker in Docker Sidecar
+      - name: dind
+        image: docker:dind
+        securityContext:
+          privileged: true
+        args:
+        - --storage-driver=overlay2
+        volumeMounts:
+        - name: docker-sock
+          mountPath: /var/run
+        - name: docker-lib
+          mountPath: /var/lib/docker
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "2Gi"
+            cpu: "500m"
+
       volumes:
       - name: workspace
         persistentVolumeClaim:
           claimName: jenkins-agent-pvc
+      - name: aws-config
+        emptyDir: {}
+      - name: docker-sock
+        emptyDir: {}
+      - name: docker-lib
+        emptyDir: {}
