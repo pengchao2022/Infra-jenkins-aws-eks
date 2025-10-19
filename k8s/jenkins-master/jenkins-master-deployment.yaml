@@ -15,7 +15,7 @@ spec:
     spec:
       serviceAccountName: jenkins
       securityContext:
-        runAsUser: 0  # 以 root 用户运行
+        runAsUser: 0
         fsGroup: 1000
       containers:
       - name: jenkins
@@ -25,27 +25,31 @@ spec:
         - containerPort: 50000
         env:
         - name: JAVA_OPTS
-          value: "-Djava.awt.headless=true -Dhudson.security.csrf.GlobalCrumbIssuerConfiguration.DISABLE_CSRF_PROTECTION=true"
-        # 添加安装命令
+          value: "-Djava.awt.headless=true -Djenkins.install.runSetupWizard=false"
         command:
         - sh
         - -c
         - |
           set -e
-          echo "Installing AWS CLI and tools..."
-          apt-get update
-          apt-get install -y curl unzip python3-pip
-          pip3 install awscli
-          echo "Tools installed successfully"
+          echo "Installing AWS CLI using official method..."
+          
+          # 方法1: 使用官方安装脚本
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          ./aws/install
+          rm -rf awscliv2.zip aws/
+          
+          echo "AWS CLI installed successfully"
+          
           # 启动 Jenkins
           exec /sbin/tini -- /usr/local/bin/jenkins.sh
         resources:
           requests:
-            memory: "512Mi"
-            cpu: "1000m"
+            memory: "1Gi"
+            cpu: "500m"
           limits:
             memory: "2Gi"
-            cpu: "1500m"
+            cpu: "1000m"
         volumeMounts:
         - name: jenkins-home
           mountPath: /var/jenkins_home
@@ -56,7 +60,7 @@ spec:
           httpGet:
             path: /login
             port: 8080
-          initialDelaySeconds: 180
+          initialDelaySeconds: 120
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 5
@@ -64,7 +68,7 @@ spec:
           httpGet:
             path: /login
             port: 8080
-          initialDelaySeconds: 120
+          initialDelaySeconds: 60
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 3
