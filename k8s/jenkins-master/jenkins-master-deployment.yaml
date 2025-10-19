@@ -15,14 +15,8 @@ spec:
     spec:
       serviceAccountName: jenkins
       securityContext:
+        runAsUser: 0  # 以 root 用户运行
         fsGroup: 1000
-      initContainers:
-      - name: install-tools
-        image: alpine:3.18
-        command: ['sh', '-c', 'echo "Tools will be installed in main container"']
-        volumeMounts:
-        - name: jenkins-home
-          mountPath: /var/jenkins_home
       containers:
       - name: jenkins
         image: jenkins/jenkins:lts-jdk11
@@ -32,20 +26,19 @@ spec:
         env:
         - name: JAVA_OPTS
           value: "-Djava.awt.headless=true -Dhudson.security.csrf.GlobalCrumbIssuerConfiguration.DISABLE_CSRF_PROTECTION=true"
-        # 添加安装命令到启动脚本
+        # 添加安装命令
         command:
         - sh
         - -c
         - |
-          # 安装 AWS CLI 和其他必要工具
-          apt-get update && \
-          apt-get install -y curl unzip && \
-          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
-          unzip awscliv2.zip && \
-          ./aws/install && \
-          rm -rf awscliv2.zip aws/ && \
+          set -e
+          echo "Installing AWS CLI and tools..."
+          apt-get update
+          apt-get install -y curl unzip python3-pip
+          pip3 install awscli
+          echo "Tools installed successfully"
           # 启动 Jenkins
-          /sbin/tini -- /usr/local/bin/jenkins.sh
+          exec /sbin/tini -- /usr/local/bin/jenkins.sh
         resources:
           requests:
             memory: "512Mi"
