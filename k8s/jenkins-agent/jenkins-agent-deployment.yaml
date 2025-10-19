@@ -18,109 +18,111 @@ spec:
       - name: jnlp
         image: jenkins/inbound-agent:latest
         securityContext:
-          runAsUser: 0  # 以 root 用户运行
-          privileged: true  # 特权模式
+          runAsUser: 0  # root 用户
         command:
         - /bin/sh
         - -c
         - |
-          echo "Starting as root user - full installation privileges available"
-          
-          echo "Installing system dependencies..."
+          echo "=== 安装 Docker 客户端 ==="
           apt-get update && apt-get install -y \
             curl \
             wget \
             unzip \
             git \
             python3 \
-            python3-pip \
-            gnupg \
-            lsb-release \
-            ca-certificates \
-            apt-transport-https \
-            software-properties-common
-
-          echo "Installing Docker..."
-          # 安装 Docker
-          install -m 0755 -d /etc/apt/keyrings
-          curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-          chmod a+r /etc/apt/keyrings/docker.gpg
-          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+            python3-pip
           
-          apt-get update
-          apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-          echo "Installing AWS CLI v2 using official method..."
-          # 方法1: 使用官方安装脚本（推荐）
+          echo "=== 安装 Docker CLI ==="
+          # 安装 Docker CLI（不安装 daemon）
+          curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-20.10.9.tgz | \
+            tar -xzC /usr/local/bin --strip-components=1
+          
+          echo "=== 安装 AWS CLI ==="
           curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
           unzip -q awscliv2.zip
           ./aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli --update
           rm -rf awscliv2.zip aws/
-
-          # 方法2: 使用系统包管理器（备选）
-          # curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-          # unzip -q awscliv2.zip
-          # ./aws/install -i /usr/local/aws-cli -b /usr/local/bin
-          # rm -rf awscliv2.zip aws/
-
-          echo "Installing Python packages (excluding awscli)..."
-          # 只安装必要的 Python 包，避免安装 awscli
-          pip3 install boto3 botocore requests docker
-
-          echo "Creating necessary directories..."
-          mkdir -p /home/jenkins/agent
-          mkdir -p /root/.aws
-          chown -R 1000:1000 /home/jenkins/agent
-
-          echo "=== Installation Verification ==="
-          echo "Docker: $(docker --version 2>/dev/null || echo 'Not installed')"
-          echo "Python: $(python3 --version 2>/dev/null || echo 'Not installed')"
-          echo "AWS CLI: $(aws --version 2>/dev/null || echo 'Not installed')"
-          echo "================================="
-
-          echo "Starting Jenkins Agent..."
-          # 切换到 jenkins 用户运行 agent
-          su - jenkins -c "java -jar /usr/share/jenkins/agent.jar -url http://jenkins-master.jenkins:8080 -workDir /home/jenkins/agent"
+          
+          echo "=== 安装 Python 包 ==="
+          pip3 install boto3 botocore requests
+          
+          echo "=== 等待 Docker Daemon 启动 ==="
+          # 等待 DinD 容器完全启动
+          for i in {1..30}; do
+            if docker version >/dev/null 2>&1; then
+              echo "Docker daemon 已就绪"
+              break
+            fi
+            echo "等待 Docker daemon... ($i/30)"
+            sleep 5
+          done
+          
+          echo "=== 验证安装 ==="
+          docker --version || echo "Docker 客户端安装失败"
+          python3 --version || echo "Python 安装失败"
+          aws --version || echo "AWS CLI 安装失败"
+          
+          echo "=== 启动 Jenkins Agent ==="
+          exec java -jar /usr/share/jenkins/agent.jar \
+            -url http://jenkins-master.jenkins:8080 \
+            -workDir /home/jenkins/agent
+        env:
+        - name: DOCKER_HOST
+          value: "unix:///var/run/docker.sock"
         resources:
           requests:
-            memory: "1Gi"
-            cpu: "500m"
+            memory: "256Mi"  # 减少到 256Mi
+            cpu: "200m"      # 减少 CPU 请求
           limits:
-            memory: "2Gi"
-            cpu: "1000m"
+            memory: "512Mi"  # 减少到 512Mi
+            cpu: "400m"      # 减少 CPU 限制
+
         volumeMounts:
         - name: workspace
           mountPath: /home/jenkins/agent
-        - name: aws-config
-          mountPath: /root/.aws
         - name: docker-sock
           mountPath: /var/run/docker.sock
 
-      # Docker in Docker Sidecar
+      # DinD 容器
       - name: dind
         image: docker:dind
         securityContext:
-          privileged: true
+          privileged: true  # DinD 需要特权模式
         args:
         - --storage-driver=overlay2
+        - --host=unix:///var/run/docker.sock
+        env:
+        - name: DOCKER_TLS_CERTDIR
+          value: ""  # 禁用 TLS，简化配置
+        resources:
+          requests:
+            memory: "256Mi"  # 减少到 256Mi
+            cpu: "200m"      # 减少 CPU 请求
+          limits:
+            memory: "512Mi"  # 减少到 512Mi
+            cpu: "400m"      # 减少 CPU 限制
         volumeMounts:
         - name: docker-sock
           mountPath: /var/run
         - name: docker-lib
           mountPath: /var/lib/docker
-        resources:
-          requests:
-            memory: "512Mi"
-            cpu: "200m"
-          limits:
-            memory: "2Gi"
-            cpu: "500m"
+        livenessProbe:
+          exec:
+            command:
+            - docker
+            - info
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - docker
+            - info
+          initialDelaySeconds: 30
+          periodSeconds: 10
 
       volumes:
       - name: workspace
-        persistentVolumeClaim:
-          claimName: jenkins-agent-pvc
-      - name: aws-config
         emptyDir: {}
       - name: docker-sock
         emptyDir: {}
