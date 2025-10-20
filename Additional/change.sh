@@ -1,3 +1,4 @@
+cat <<EOF | kubectl apply -f -
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -125,3 +126,4 @@ spec:
         emptyDir: {}
       - name: docker-storage
         emptyDir: {}
+EOF

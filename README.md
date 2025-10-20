@@ -6,6 +6,14 @@ In this demo, I will deploy jenkins to AWS EKS, one jenkins master and one jenki
 
 - one jenkins-master and one jenkins-agent
 
+- the jenkins-agent pod with sidecar model which is DinD(docker in docker) to run the docker 
+
+   daemon
+
+- the main jenkins-agent pod will have aws-cli and python3 installed and the DinD will have 
+
+   docker installed 
+
 - disabled csrf when you first login
 
 - github actions for the cicd 
@@ -13,6 +21,7 @@ In this demo, I will deploy jenkins to AWS EKS, one jenkins master and one jenki
 - alb ingress so that the jenkins can  be accessed through internet 
 
 - PVC for both master and agent
+
 
 ## Usage
 
@@ -29,6 +38,11 @@ In this demo, I will deploy jenkins to AWS EKS, one jenkins master and one jenki
     - Pipeline
     - Kubernetes CLI
     - Docker Pipeline
+    - aws-credentials
+
+- if you are first time to use jenkins please configure your aws credentials like this
+
+![aws_credentials](./aws_credentials.png)
 
 - you can fork or clone this repo if you think you need it 
 ```shell
@@ -36,7 +50,7 @@ git clone https://github.com/pengchao2022/Infra-jenkins-aws-eks.git
 ```
 - here's the pod running on EKS 
 
-![Jenkins_pod](./jenkins_pod.png)
+![Jenkins_pod](./jenkins_master_agent_pods.png)
 
 
 ## Refrence
@@ -45,9 +59,13 @@ git clone https://github.com/pengchao2022/Infra-jenkins-aws-eks.git
 
 ![Jenkins](./jenkins.png)
 
+- with jenkins nodes secret created and the jenkins-agent is online now 
+
+![Jenkins](./jenkins_node_agent.png)
+
 ## Notice
 
-- For the jenkins-agent pod it's normal when it's not running , since when there is no job running , and the agent will stop without running . This is right not errors 
+- We just have one master pod and one agent pod running in EKS for the dev environment, in a production env you can modify the deployment replicas to have more pods and big memory.
 
 Ma pengchao @2025
 

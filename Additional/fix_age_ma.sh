@@ -1,3 +1,4 @@
+kubectl apply -f - <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -35,37 +36,17 @@ spec:
           echo "=== 安装 Docker CLI ==="
           curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-20.10.9.tgz | tar -xzC /usr/local/bin --strip-components=1
           
-          echo "=== 等待 Docker Daemon 启动（延长等待时间）==="
-          MAX_WAIT=90
-          for i in \$(seq 1 \$MAX_WAIT); do
-            # 检查 socket 文件
-            if [ -S /var/run/docker.sock ]; then
-              echo "✅ Docker socket 存在"
-              
-              # 测试 Docker 连接
-              if timeout 5s docker version >/dev/null 2>&1; then
-                echo "✅ Docker daemon 响应正常"
-                echo "Docker 信息:"
-                docker version --format '{{.Client.Version}}' 2>/dev/null || echo "无法获取版本"
-                break
-              else
-                echo "⚠️ Docker socket 存在但无响应 (\$i/\$MAX_WAIT)"
-              fi
-            else
-              echo "⏳ 等待 Docker socket... (\$i/\$MAX_WAIT)"
+          echo "=== 等待 Docker Daemon 启动 ==="
+          for i in {1..30}; do
+            if docker version >/dev/null 2>&1; then
+              echo "✅ Docker daemon 就绪"
+              break
             fi
-            
-            if [ \$i -eq \$MAX_WAIT ]; then
-              echo "❌ 超时：Docker daemon 未启动"
-              echo "调试信息:"
-              ls -la /var/run/ 2>/dev/null | head -10
-            fi
-            
-            sleep 3
+            sleep 2
           done
           
           echo "=== 启动 Jenkins Agent ==="
-          # 即使 Docker 有问题也启动 Agent，让任务可以运行（只是没有 Docker）
+          # 正确的参数格式：使用 -url 和 -secret，不要用 -jnlpUrl
           exec java -jar /usr/share/jenkins/agent.jar \
             -url http://jenkins-master.jenkins:8080 \
             -workDir /home/jenkins/agent \
@@ -110,13 +91,6 @@ spec:
           mountPath: /var/run
         - name: docker-storage
           mountPath: /var/lib/docker
-        # 添加健康检查
-        livenessProbe:
-          exec:
-            command: ["docker", "info"]
-          initialDelaySeconds: 60
-          periodSeconds: 30
-          timeoutSeconds: 10
 
       volumes:
       - name: workspace
@@ -125,3 +99,4 @@ spec:
         emptyDir: {}
       - name: docker-storage
         emptyDir: {}
+EOF
